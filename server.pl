@@ -4,7 +4,7 @@ use warnings;
 
 use IO::Socket::INET;
 use MIME::Base64;
-use Digest::CRC qw( crc64 crc32 crc ); # Module for CRC calculation
+# use Digest::CRC qw( crc64 crc32 crc ); # Module for CRC calculation
 use v5.14;
 
 $| = 1;							# Flushing to SOCKET after each write

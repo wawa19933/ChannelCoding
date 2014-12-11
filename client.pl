@@ -14,7 +14,7 @@ use warnings;
 use IO::Socket::INET;         	# Module that adds the socket support
 use File::Basename;				# Module for extracting file name from the path
 use MIME::Base64;				# Module for encoding binary data
-use Digest::CRC qw( crc64 crc32 crc ); # Module for CRC calculation
+# use Digest::CRC qw( crc64 crc32 crc ); # Module for CRC calculation
 use IO::Poll qw(POLLIN POLLOUT POLLHUP); # Module for ARQ realization: for data detection in a receiving buffer
 use Fcntl qw(SEEK_SET);
 use POSIX;
