@@ -7,8 +7,7 @@ use MIME::Base64;
 use v5.14;
 
 $| = 1;							# Flushing to SOCKET after each write
-$\ = "\n";						# Added as an invisible last element to the parameters 
-								# passed to the print() function. *doc
+$\ = "\n";						# Added as an invisible last element to the parameters passed to the print() function. *doc
 my $ask = shift || 0;
 my $port = '8849';
 my ( $buffer, $message, $counter, $peerAddress, $peerName, $fileSize, $fileName, %fileParts, @arq );
@@ -40,6 +39,7 @@ while () {
 			receiveData ( @packet );
 		}
 		when ('FINISH') {
+			while (checkBuffer ()) {}
 			$counter = 0;
 		}
 		when ('EXIT') {
@@ -48,7 +48,8 @@ while () {
 	 }
 }
 
-close $socket;
+close $socket;			# Closing the socket
+close FILE;				# Closing the file
 
 # ============= Functions ===================
 sub receiveData {
@@ -60,14 +61,14 @@ sub receiveData {
 		# @arq = $counter;
 	# } 
 	
-	$rawData = decode_base64 ( $encoded );
-	$crc = crc32 ( $rawData );
-	if ( $crc == $hash ) {
-		$fileParts{ $num } = $rawData;
+	$rawData = decode_base64 ( $encoded );			# Decoding file part from Base64
+	$crc = crc32 ( $rawData );						# Calculating checksum of received data
+	if ( $crc == $hash ) {							# Checking checksums
+		$fileParts{ $num } = $rawData;				# Appending buffer for file writting
 	}
 	else {
 		print "$num - Checksums differ!"
-		push @arq, $num;
+		push @arq, $num;							# Appending array with packets should be repeated
 	}
 }
 
@@ -82,9 +83,30 @@ sub openFile {
 	open FILE, '>', $fileName || die "Can not write the file $fileName: $!";
 }
 
-sub checkBuffer {
-	foreach $k ( keys %fileParts ) {
-		
+sub prepareARQ {
+	my $count = 0;
+	my $packetsCount = $fileSize / 1024;
+	for ( $i = 0; $i < $packetsCount; $i++ ) {
+		my $ok = 0;
+		foreach $k ( keys %fileParts ) {
+			if ( $i == $k ) {
+				$ok = 1;
+				break;
+			}
+		}
+		if ( $ok ) {
+			continue;
+		}
+		else {
+			push @arq, $i;
+		}
+	}
+}
+
+sub processARQ {
+	foreach $num ( @arq ) {
+		my @msg = ( 'ARQ', $num, length @arq );
+		$socket->send ( join ';', @msg );
 	}
 }
 
@@ -97,10 +119,7 @@ sub getIP {
 	if ( wantarray() ) {				# List context
 		return ( $peerAddress, $peerName );
 	} 
-	elsif ( defined wantarray() ) {		# Scalar context
+	else ( defined wantarray() ) {		# Scalar context
 		return $peerAddress;
-	} 
-	else {								# Void context
-		return;
 	} 
 }

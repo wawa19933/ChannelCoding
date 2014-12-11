@@ -31,7 +31,7 @@ my $filePath = shift; 	     			# Taking the file's path from the FIRST argument
 my $hostAddr = shift || 'localhost';	# Taking the server's address from the SECOND argument
 my $port = '8849';						# Variable for port number defenition
 my $filename = fileparse ( $filePath );	# Extracting the name of the file
-my ( $buffer, $counter, @arq ); 	# Some global variables
+my ( $buffer, $counter, $partsCount, @arq ); 		# Some global variables
 my $sz = 1024;
 my $fileSize = -s $filePath;
 print "Going to send $filename to $hostAddr";
@@ -48,41 +48,62 @@ my $socket = IO::Socket::INET->new(
 				Type		=> SOCK_DGRAM
 	) or die "Couldn't create socket!!!: $!";
 
-
-# 1) --	Sending the file name to server	#################################
 $counter = 0;
+$partsCount = 0;
+# 1) --	Sending the file name to server	#################################
 my @msg = ( 'NAME', $counter, $filename, $fileSize );
 $socket->send ( join ';', @msg ) or die "Sending error: $!";
 
+print "Filename is sent, starting to send the file...";
 # 2) --	Sending the whole file by parts of $sz Bytes size
-while ( read FILE, $buffer, $sz > 0 ) {						# This loop performs reading the file untill the end of it
-	my $res = sendData ( $buffer );
-	print " $res bytes are sent to $hostAddr";				# sending the prepared data
+while ( read FILE, $buffer, $sz > 0 ) {							# This loop performs reading the file untill the end of it
+	my $res = sendData ( $buffer );								# sending the prepared data
+	print "$counter) $res bytes are sent to $hostAddr";
+	$partsCount ++;
 }
-
+my $cc = $fileSize / $sz;
+print "\nParts count: $partsCount, calculated: $cc"; 
+while (checkForPackets ()) {}
 print "\nThe end\n";
 
-close FILE;       # Closing the file
-
-sub HELP_MESSAGE {
-	print "\nUsage: client.pl [file] [host] \n";
-}
+close FILE;       	# Closing the file
+close $socket;		# Closing the socket 
 
 sub sendData {
 	my $rawData = shift;					# Parameter of the function is data from file
 	my ( $encoded, $hash ); 
 	
 	$counter ++;
-	$hash = crc32 ( $rawData );
+	# $hash = crc32 ( $rawData );
 	$encoded = encode_base64 ( $rawData );
 	
-	my @msg = ( 'DATA', $counter, $encoded, $hash );
+	my @msg = ( 'DATA', $counter, $encoded );#, $hash );
 	
-	return $socket->send (join ( ';', @msg ));
+	return $socket->send (join ';', @msg );
+}
+
+sub checkForPackets {
+	my $check = IO::Poll->new;					# Creating an object for poll() call
+	$check->mask ( $socket => POLLIN );			# and watching for incoming data
+
+	if ( $check->poll () ) {					# checking for the incoming ARQ in receiving 
+		$socket->recv ( $buffer, 255 );
+		my @packet = split ';', $buffer;
+		my $cmd = shift @packet;
+		
+		if ( $cmd == 'ARQ' ) {
+			repeatSending ( @packet );
+			return 1;
+		}
+		if ( $cmd == 'FINISH' ) {
+			$socket->send ( 'EXIT' );
+			return 0;
+		}
+	}
 }
 
 sub repeatSending {
-	my ( $cmd, $num, $data ) = @_;
+	my ( $num, $data ) = @_;
 	my $pos = tell FILE;
 	
 	if ( seek FILE, $num * $sz, SEEK_SET ) {
@@ -90,19 +111,9 @@ sub repeatSending {
 			print sendData ( $buffer ) . " bytes of $num ARQ are re-sent to $hostAddr";
 		}
 	}
-	
 	seek FILE, $pos, SEEK_SET;
 }
 
-sub checkForPackets {
-	my $check = IO::Poll->new;					# Creating an object for poll() call
-	$check->mask ( $socket => POLLIN );			# and watching for incoming data
-
-	if ( $check->poll (15) ) {										# checking for the incoming ARQ in receiving 
-		my $arqMsg;
-		$socket->recv ( $arqMsg, 255 );
-		my @packet = split ';', $arqMsg;
-		
-		repeatSending (@packet);
-	}
+sub HELP_MESSAGE {
+	print "\nUsage: client.pl [file] [host] \n";
 }
