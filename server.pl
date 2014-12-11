@@ -4,6 +4,7 @@ use warnings;
 
 use IO::Socket::INET;
 use MIME::Base64;
+use Digest::CRC qw( crc64 crc32 crc ); # Module for CRC calculation
 use v5.14;
 
 $| = 1;							# Flushing to SOCKET after each write
@@ -38,8 +39,12 @@ while () {
 		when ('DATA') {
 			receiveData ( @packet );
 		}
+		when ('CHECK') {
+			print scalar @arq;
+			prepareARQ ();
+			processARQ ();
+		}
 		when ('FINISH') {
-			while (checkBuffer ()) {}
 			$counter = 0;
 		}
 		when ('EXIT') {
@@ -53,28 +58,16 @@ close FILE;				# Closing the file
 
 # ============= Functions ===================
 sub receiveData {
-	my ( $num, $encoded, $hash ) = @_; 				# Packet number and encoded data from socket as parameters
-	my ( $rawData, $crc );
+	my ( $num, $encoded ) = @_; 				# Packet number and encoded data from socket as parameters
+	my $rawData;
 	$counter ++;
 	
-	# if ( $counter != $num ) {
-		# @arq = $counter;
-	# } 
-	
 	$rawData = decode_base64 ( $encoded );			# Decoding file part from Base64
-	$crc = crc32 ( $rawData );						# Calculating checksum of received data
-	if ( $crc == $hash ) {							# Checking checksums
-		$fileParts{ $num } = $rawData;				# Appending buffer for file writting
-	}
-	else {
-		print "$num - Checksums differ!"
-		push @arq, $num;							# Appending array with packets should be repeated
-	}
 }
 
 sub openFile {
-	my $fileSize = pop @_;
-	my $fileName = pop @_;
+	$fileSize = pop @_;
+	$fileName = pop @_;
 	if ( $ask ) {
 		$_ = "";
 		print "Enter the file name to save: ";
@@ -86,9 +79,9 @@ sub openFile {
 sub prepareARQ {
 	my $count = 0;
 	my $packetsCount = $fileSize / 1024;
-	for ( $i = 0; $i < $packetsCount; $i++ ) {
+	for ( my $i = 0; $i < $packetsCount; $i++ ) {
 		my $ok = 0;
-		foreach $k ( keys %fileParts ) {
+		foreach my $k ( keys %fileParts ) {
 			if ( $i == $k ) {
 				$ok = 1;
 				break;
@@ -104,8 +97,9 @@ sub prepareARQ {
 }
 
 sub processARQ {
-	foreach $num ( @arq ) {
-		my @msg = ( 'ARQ', $num, length @arq );
+	my $count = @arq;
+	foreach my $num ( @arq ) {
+		my @msg = ( 'ARQ', $num, $count-- );
 		$socket->send ( join ';', @msg );
 	}
 }
@@ -115,11 +109,10 @@ sub getIP {
 	my $peerAddress = inet_ntoa( $iaddr );
 	my $peerName = gethostbyaddr ( $iaddr, AF_INET );
 	
-	# print "$peerAddress, $peerName";
 	if ( wantarray() ) {				# List context
 		return ( $peerAddress, $peerName );
 	} 
-	else ( defined wantarray() ) {		# Scalar context
+	elsif ( defined wantarray() ) {		# Scalar context
 		return $peerAddress;
 	} 
 }
