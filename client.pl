@@ -14,8 +14,8 @@ use warnings;
 use IO::Socket::INET;         	# Module that adds the socket support
 use File::Basename;				# Module for extracting file name from the path
 use MIME::Base64;				# Module for encoding binary data
-use IO::Poll qw(POLLIN POLLOUT POLLHUP); # Module for ARQ realization: for data detection in a receiving buffer
-use Fcntl qw(SEEK_SET);			# Declaration of SEEK_SET flag for file seeking
+use IO::Poll qw( POLLIN POLLOUT POLLHUP ); # Module for ARQ realization: for data detection in a receiving buffer
+use Fcntl qw( SEEK_SET );			# Declaration of SEEK_SET flag for file seeking
 use POSIX;						# For support of math functions
 
 $\ = "\n";			# Added as an invisible last element to the parameters passed to the print() function. *doc
@@ -31,7 +31,7 @@ my $filePath = shift; 	     				# Taking the file's path from the FIRST argument
 my $hostAddr = shift || 'localhost';		# Taking the server's address from the SECOND argument
 my $port = '8849';							# Variable for port number defenition
 my $filename = fileparse ( $filePath );		# Extracting the name of the file
-my ( $buffer, $counter, $partsCount, @arq ); 	# Some global variables
+my ( $buffer, $counter, $partsCount, @arq );# Some global variables
 my $sz = 1024;								# Definding of packet portion for transmittion
 my $fileSize = -s $filePath;				# Taking the size of the local file (-s is a size operator)
 print "Going to send $filename to $hostAddr";	
@@ -50,6 +50,7 @@ my $socket = IO::Socket::INET->new(
 
 $counter = 0;								# Initialization of the counter for transmitions' number
 $partsCount = ceil ( $fileSize / $sz );		# Number of packets to be sent
+
 # 1) --	Sending the file name to server	#################################
 while ( $counter != 3 ) {					# Loop for 3times file information transmition
   my @msg = ( 'NAME', $partsCount, $filename, $fileSize );			# Forming of the message
@@ -59,17 +60,29 @@ while ( $counter != 3 ) {					# Loop for 3times file information transmition
 
 $counter = 0;								# Initialization of the counter for packet numbering
 print "Filename is sent, starting to send the file...";
-# 2) --	Sending the whole file by parts of $sz Bytes size
+
+# 2) --	Sending the whole file by parts of $sz Bytes size ###############
 while ( read ( FILE, $buffer, $sz ) > 0 ) {		# This loop performs reading the file untill the end of it
-	my $res = sendData ( $buffer );			# Sending the prepared data
+	my $res = sendData ( $buffer );				# Sending the prepared data
 	print "$counter) $res bytes are sent to $hostAddr";
 }
 
+# 3) -- Start repeat requests processing ################################
 my $stop = 1;								# A flag for breaking the loop of ARQ processing
 print "\n============ Processing ARQ... ==========";
 while ( $stop ) {							# Untill we mark it for stop
-	$socket->send ( 'CHECK' );	# 
-	$stop = checkForPackets ();	#
+	if ( checkForPackets() ) {
+		$socket->recv ( $buffer, 2000 );
+		my @packet = split ';', $buffer;
+		my $cmd = shift @packet;
+		if ( $cmd eq 'ARQ' ) {
+			repeatPart ( @packet );
+		}
+		elsif ( $cmd eq 'FINISH' ) {
+			$stop = 0;
+		}
+	}
+	$socket->send ( 'CHECK' );				# 
 }
 
 print "\nThe end\n";
@@ -91,30 +104,39 @@ sub sendData {								# Function for file parts transmition
 sub checkForPackets {						#
 	my $check = IO::Poll->new;				# Creating an object for poll() call
 	$check->mask ( $socket => POLLIN )		# and watching for incoming data
+	my $res = $check->poll ( 100 );
 	
-	while ( ) {								#
-		if ( $check->poll (100) ) {			# checking for the incoming ARQ in receiving 
-			$socket->recv ( $buffer, 255 );	#
-			my @packet = split ';', $buffer;#
-			my $cmd = shift @packet;		#
-			my $num = shift @packet;		#
-			my $left = pop @packet;			#
-			
-			if ( $cmd eq 'ARQ' ) {			#
-				print "Server has not got $num/$left packets";
-				push @packet, $num;			#
-			}
-			if ( $cmd eq 'FINISH' ) {		#
-				foreach $num ( @arq ) {		#
-					repeatPart ( $num );	#
-				}
-			}
-			if ( $cmd eq 'EXIT' ) {			#
-				$socket->send ( 'EXIT' );	#
-				return 0;					#
-			}
-		}
+	if ( $res == -1 ) {
+		print "Poll error : $!";
+		return 0;
 	}
+	else {
+		return $res;
+	}
+
+	# while ( ) {								#
+	# 	if ( $check->poll (100) ) {			# checking for the incoming ARQ in receiving 
+	# 		$socket->recv ( $buffer, 255 );	#
+	# 		my @packet = split ';', $buffer;#
+	# 		my $cmd = shift @packet;		#
+	# 		my $num = shift @packet;		#
+	# 		my $left = pop @packet;			#
+			
+	# 		if ( $cmd eq 'ARQ' ) {			#
+	# 			print "Server has not got $num/$left packets";
+	# 			push @packet, $num;			#
+	# 		}
+	# 		if ( $cmd eq 'FINISH' ) {		#
+	# 			foreach $num ( @arq ) {		#
+	# 				repeatPart ( $num );	#
+	# 			}
+	# 		}
+	# 		if ( $cmd eq 'EXIT' ) {			#
+	# 			$socket->send ( 'EXIT' );	#
+	# 			return 0;					#
+	# 		}
+	# 	}
+	# }
 }
 
 sub repeatPart {							#
