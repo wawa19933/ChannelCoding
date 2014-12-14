@@ -90,7 +90,7 @@ sub sendData {								# Function for file parts transmition
 
 sub checkForPackets {						#
 	my $check = IO::Poll->new;				# Creating an object for poll() call
-	$check->mask ( $socket => POLLIN )		# and watching for incoming data
+	$check->mask ( $socket => POLLIN );		# and watching for incoming data
 	
 	while ( ) {								#
 		if ( $check->poll (100) ) {			# checking for the incoming ARQ in receiving 
