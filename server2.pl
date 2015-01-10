@@ -27,20 +27,27 @@ if ($argc < 1) {				# If there is no arguments ->
 	exit;						# Exit
 }
 my $port = '8849';							# Variable for port number defenition
+my $srvPort = '8850'
 my $fileName = fileparse ( $filePath );		# Extracting the name of the file
 my ( $buffer, $number, $partsCount, @arq, %fileParts ); # Some global variables
+my ( $dataSocket, $serviceSocket );
 my $blockSize = 4096;						# Definding of packet portion for transmittion
 my $fileSize = -s $filePath;				# Taking the size of the local file (-s is a size operator)
 my $windowSize = 80;						# ARQ Window size 
 my $timeout = 0.7;
 my $delim = ';';
 
-print "======= UDP Server on Perl ========";
-my $socket = IO::Socket::INET->new (
+print "======= File transfer on Perl ========";
+$dataSocket = IO::Socket::INET->new (
 		LocalPort 	=> $port,
-		Port 		=> 'udp',
+		Proto 		=> 'udp',
 		Type		=> SOCK_DGRAM
-	) || die "Could not start the server on port $port : $!";
+	) or die "Could not start the server on port $port : $!";
+$serviceSocket = IO::Socket::INET->new (
+		LocalPort	=> $srvPort,
+		Proto 		=> 'tcp';
+		Type		=> SOCK_STREAM
+	) or die "Couldn't create TCP socket on port $srvPort : $!";
 
 ##		Starting the receiving loop that is controlled by 	##
 ##		commands from the client via Switch-like statment	##
