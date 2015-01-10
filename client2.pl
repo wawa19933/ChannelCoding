@@ -46,7 +46,7 @@ open FILE, '<', $filePath or die "Can not open the file!!! $filePath: $!";
 binmode FILE;
 
 #	Creating the UDP socket for file parts transmitting with specified host
-$dataSocket = IO::Socket::INET->new(
+$dataSocket = IO::Socket::INET->new (
 		PeerAddr 	=> $hostAddr,
 		PeerPort 	=> $port,
 		Proto 		=> 'udp',
@@ -54,7 +54,7 @@ $dataSocket = IO::Socket::INET->new(
 		Timeout 	=> 100
 	) or die "Couldn't create UDP socket!!!: $!";
 
-$serviceSocket = IO::SOCKET::INET->new(
+$serviceSocket = IO::SOCKET::INET->new (
 		PeerAddr	=> $hostAddr,
 		PeerPort	=> $srvPort,
 		Proto 		=> 'tcp',
@@ -77,7 +77,7 @@ while ( !eof(FILE) )
 					die "Error during file reading : $!";
 		
 		$number ++;
-		@msg = ('DATA', $number, encode_base64 ( $buffer ));
+		@msg = ($number, encode_base64 ( $buffer ));
 
 		$bytes = $dataSocket->send ( join ($delim, @msg) ) || 
 					die "Error during sending : $!";

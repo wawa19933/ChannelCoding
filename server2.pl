@@ -43,34 +43,42 @@ $dataSocket = IO::Socket::INET->new (
 		Proto 		=> 'udp',
 		Type		=> SOCK_DGRAM
 	) or die "Could not start the server on port $port : $!";
-$serviceSocket = IO::Socket::INET->new (
+my $serverTcp = IO::Socket::INET->new (
 		LocalPort	=> $srvPort,
-		Proto 		=> 'tcp';
-		Type		=> SOCK_STREAM
+		Proto 		=> 'tcp',
+		Type		=> SOCK_STREAM,
+		Listen 		=> 1
 	) or die "Couldn't create TCP socket on port $srvPort : $!";
+
+$serviceSocket = $serverTcp->accept();
 
 ##		Starting the receiving loop that is controlled by 	##
 ##		commands from the client via Switch-like statment	##
 while () 
 {
-	my $rcv = $socket->recv ( my $message, $blockSize );
-	my ( $port, $iaddr ) = sockaddr_in ( $rcv );
-	my $peerAddress = inet_ntoa ( $iaddr );
-	my $peerName = gethostbyaddr ( $iaddr, AF_INET );
+	# my @socketList = checkIncome ();
+	if ( checkService() ) {
+		my $rcv = $serviceSocket->recv ( $buffer, 9000 );
+	}
+	# my ( $port, $iaddr ) = sockaddr_in ( $rcv );
+	# my $peerAddress = inet_ntoa ( $iaddr );
+	# my $peerName = gethostbyaddr ( $iaddr, AF_INET );
+	my @msg = split $delim, $buffer;
+	my $cmd = shift @msg;
 
-	print length($message) . " bytes are received from $peerAddress ($peerName)";
-	my @packet = split ';', $message;
-	my $cmd = shift @packet;
+	print length($message) . " bytes are \'$cmd\' received from $peerAddress ($peerName)";
+	# my @packet = split ';', $message;
+	# my $cmd = shift @packet;
 
 	given ($cmd)
 	{
-		when ('DATA') {
-			my $num = shift @packet;
-			my $encoded = shift @packet;
-			print "$num) -- " . length($encoded) . " bytes of file received!";
-			$fileParts{$num} = decode_base64 ( $encoded );
+		when ('INFO') {
+			my $num = shift @msg;
+			my $fileName = shift @msg;
+			my fileSize = shift @msg;
+			print "$fileSize bytes of $fileName to be received...";
 		}
-		when ('WINDOW') {
+		when ('WINDOWEnd') {
 			my @nums = sort keys %fileParts;
 			@arq = undef;
 			for ($i = 0; $i < $#nums; $i++)
@@ -84,5 +92,68 @@ while ()
 			my @msg = ('ARQ', ':', join (':', @arq));
 			$socket->send ( join (';', @msg) );
 		}
+		default {
+			if ( checkUdp() ) {
+				$dataSocket->recv ( $buffer, 9000 );
+				my @msg = split $delim, $buffer;
+				my $num = shift @msg;
+				my $encoded = shift @msg;
+				print "$num) -- " . length($encoded) . " bytes of file received!";
+				$fileParts{$num} = decode_base64 ( $encoded );	
+			}
+		}
 	}
+}
+
+close $dataSocket;
+close $serviceSocket;
+
+#################
+
+sub checkIncome {
+	my $poll = IO::Poll->new;
+	$poll->mask ( 
+			$serviceSocket => POLLIN,
+			$dataSocket    => POLLIN 
+		);
+	my $result = $poll->poll ();
+
+	if ( $result == -1 ) {
+		print "Error with poll() : $!";
+		return 0;
+	}
+
+	return $poll->handles( POLLIN );
+}
+
+sub checkService {
+	my $time = shift || 0.125;
+	my $poll = IO::Poll->new;
+	$poll->mask (
+			$serviceSocket => POLLIN
+		);
+
+	my $res = $poll->poll ( $time );
+	if ( $res == -1 ) {
+		print "Error with poll() : $!";
+		return 0;
+	}
+
+	return $res;
+}
+
+sub checkUdp {
+	my $time = shift || 0.125;
+	my $poll = IO::Poll->new;
+	$poll->mask (
+			$dataSocket => POLLIN
+		);
+
+	my $res = $poll->poll ( $time );
+	if ( $res == -1 ) {
+		print "Error with poll() : $!";
+		return 0;
+	}
+
+	return $res;
 }
