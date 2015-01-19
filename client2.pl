@@ -5,7 +5,7 @@
 #	Description:												#
 #																#
 #		 	 				_________________________________	#
-#		Packet structure:  | command | number | data | [CRC] |	#
+#		Packet structure:  | number |	   data 	|  [CRC] |	#
 #						    ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾	#
 #################################################################
 use strict;
@@ -17,93 +17,99 @@ use MIME::Base64;				# Module for encoding binary data
 use IO::Poll qw( POLLIN ); 		# Module for ARQ realization: for data detection in a receiving buffer
 use Fcntl qw( SEEK_SET );		# Declaration of SEEK_SET flag for file seeking
 use POSIX;						# For support of math functions
-use String::CRC32;
+use Digest::CRC qw( crc32 );	# Module for CRC32 calculation function
+use Term::ProgressBar;
 
 $\ = "\n";			# Added as an invisible last element to the parameters passed to the print() function. *doc
 $| = 1;				# If nonzero, will flush the output buffer after every write() or print() function. Normally, it is set to 0. *doc
 				
 my $argc = @ARGV;				# Checking the number of arguments
 if ($argc < 1) {				# If there is no arguments ->
-	HELP_MESSAGE();				# 			print the help message
+	HELP_MESSAGE();				# 			print the help message and
 	exit;						# Exit
 }
 my $filePath = shift; 	     				# Taking the file's path from the FIRST argument
 my $hostAddr = shift || 'localhost';		# Taking the server's address from the SECOND argument
-my $port = '8849';							# Variable for port number defenition
-my $srvPort = '8850'
+my $udpPort = '8849';						# Variable for port number of the UDP socket for data transmission
+my $tcpPort = '8850';						# Port for TCP connection for service info exchange
 my $fileName = fileparse ( $filePath );		# Extracting the name of the file
-my $blockSize = 4096;						# Definding of packet portion for transmittion
 my $fileSize = -s $filePath;				# Taking the size of the local file (-s is a size operator)
+my $blockSize = 4096;						# Definding of packet portion for transmittion
 my $windowSize = 80;						# ARQ Window size 
-my $timeout = 0.7;
-my $delim = ';';
-my ( $buffer, $number, $partsCount, @arq, @msg ); # Some global variables
-my ( $dataSocket, $serviceSocket );
+my $timeout = 0.7;							# Global timeout variable
+my $delim = ';';							# Global delimiter for packets' fields
+my ( $buffer, $number, $partsCount, $windowCount, @arq); 	# Some global variables
+my ( $dataSocket, $serviceSocket );					# 
+###	END of declarations
+
 print "Going to send $fileName to $hostAddr";	
 
 #	Opening the specified file in BINARY form for reading only
 open FILE, '<', $filePath or die "Can not open the file!!! $filePath: $!";
 binmode FILE;
 
-#	Creating the UDP socket for file parts transmitting with specified host
+#	Creating a UDP socket for file parts transmission to the specified host
 $dataSocket = IO::Socket::INET->new (
 		PeerAddr 	=> $hostAddr,
-		PeerPort 	=> $port,
+		PeerPort 	=> $udpPort,
 		Proto 		=> 'udp',
-		Type		=> SOCK_DGRAM,
-		Timeout 	=> 100
+		Type		=> SOCK_DGRAM
 	) or die "Couldn't create UDP socket!!!: $!";
-
-$serviceSocket = IO::SOCKET::INET->new (
+#	Creating a TCP socket for service info transmission
+$serviceSocket = IO::Socket::INET->new (
 		PeerAddr	=> $hostAddr,
-		PeerPort	=> $srvPort,
+		PeerPort	=> $tcpPort,
 		Proto 		=> 'tcp',
-		Type		=> SOCK_STREAM,
-		Timeout 	=> 100
+		Reuse 		=> 1,
+		Type		=> SOCK_STREAM
 	) or die "Couldn't create TCP socket! : $!";
+# my $progressBar = Term::ProgressBar->new ( $fileSize ); # Initialization of a progress bar with the size of the file
+$number = 0;									# Initialization of the counter for transmitions' number
 
-$number = 0;								# Initialization of the counter for transmitions' number
-$partsCount = ceil ( $fileSize / $sz );		# Number of packets to be sent
+#	1)	---	Sending a file info 
+$serviceSocket->send ( join $delim, ( 'INFO', $fileName, $fileSize ) );
 
-#	1)	---	Sending info
-$serviceSocket->send ( join $delim, ( 'INFO', $number, $fileName, $fileSize ) );
-
-#	2)	---	Sending file
+#	2)	---	Sending the file
 while ( !eof(FILE) ) 
 {
-	for ( $i = 0; $i < $window; $i++ ) 
+	#	2.1) -- Sending $windowSize packets (file parts)
+	for ( my $i = 0; $i < $windowSize; $i++ ) 
 	{
-		my $bytes = read ( FILE, $buffer, $blockSize ) || 
+		my $bytes = read ( FILE, $buffer, $blockSize ) || 		# Reading the $blockSize bytes from the file
 					die "Error during file reading : $!";
 		
 		$number ++;
-		@msg = ($number, encode_base64 ( $buffer ));
+		$bytes = $dataSocket->send ( join ( $delim, ($number, encode_base64 ( $buffer ), crc32($buffer)) ) ) || 
+					die "Error during sending : $!"; 	# Sending the Base64 encoded part of the file and checksum for this part
 
-		$bytes = $dataSocket->send ( join ($delim, @msg) ) || 
-					die "Error during sending : $!";
+		# $progressBar->update ( tell FILE );
+
+		# DEBUG
+		my $ss = $number * $blockSize;
+		print "$number) Calculated position: $ss \/ Real: " . tell FILE;
 	}
 
-	#	3)	---	Checking
-	getARQ();
-	foreach $n (@arq)
+	#	2.2) -- Checking and repeating
+	my $ack = 'KO';
+	my $c = 0;
+	while ( ( $ack ne 'OK' ) || ( $c < 5 ) ) 
 	{
-		repeatPart ( $n ) or 
-			die "Can not resend $n : $!";
+		$c++;
+		# DEBUG
+		print "Send CHECK <-----";
+		
+		$serviceSocket->send ('CHECK');
+		getARQ ($ack);
+		foreach my $n (@arq)
+		{
+			repeatPart ( $n ) or 
+				die "Can not resend $n : $!";
+		}		
 	}
 
-	# while ( !checkReceive (0.110) )
-	# {
-	# 	$socket->send ( 'WINDOW' );
-	# }
-	# $socket->recv ( $buffer, $blockSize );
-	# my @msg = split $delim, $buffer;
-	# my $cmd = shift @msg;
-	# my @parts = split ( ',', shift @msg );
-	# foreach $num ( @parts ) {
-	# 	if (repeatPart ( $num ) > 0) {
-			
-	# 	}
-	# }
+	#	2.3) -- Window is sent successfully
+	$windowCount++;
+	print "\nWindow $windowCount has been sent!\n";
 }
 
 my $crc = crc32 ( *FILE );
@@ -127,7 +133,7 @@ close $serviceSocket;
 sub checkReceive {
 	my $time = shift || $timeout;
 	my $poll = IO::Poll->new;
-	$poll->mask ( $socket => POLLIN );
+	$poll->mask ( $serviceSocket => POLLIN );
 	my $result = $poll->poll ( $time );
 
 	if ( $result == -1 ) {
@@ -140,18 +146,19 @@ sub checkReceive {
 
 sub getARQ {
 	undef @arq;
-	my $bytes = $serviceSocket->read ( $buffer, 7000 ) or 
+	my $ack = shift;
+	my $bytes = $serviceSocket->recv ( $buffer, 9000 ) or 
 		die "Can not read the service TCP socket! : $!";
 
-	my @message = split $delim, $buffer;
-	my $cmd = shift @message;
+	my @msg = split $delim, $buffer;
+	$ack = shift @msg;
 
-	if ($cmd eq 'ARQ') {
-		@arq = split (':', shift ( @message ));
+	if ($ack eq 'ARQ') {
+		@arq = split (':', shift ( @msg ));
 	}
 
 	# DEBUG
-	print "\nARQ list: @arq"; 
+	print "getARQ finish\nARQ list: @arq"; 
 }
 
 sub repeatPart {
@@ -166,7 +173,7 @@ sub repeatPart {
 	read ( FH, $buffer, $blockSize ) or
 		die "Read the part for repeat error : $!";
 
-	my $res = $socket->send ( ('DATA', $num, encode_base64($buffer)) ) or
+	my $res = $dataSocket->send ( ('DATA', $num, encode_base64($buffer)) ) or
 		die "Send the repeat part error : $!";
 	
 	# DEBUG
