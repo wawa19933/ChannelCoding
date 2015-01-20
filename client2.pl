@@ -17,8 +17,9 @@ use MIME::Base64;				# Module for encoding binary data
 use IO::Poll qw( POLLIN ); 		# Module for ARQ realization: for data detection in a receiving buffer
 use Fcntl qw( SEEK_SET );		# Declaration of SEEK_SET flag for file seeking
 use POSIX;						# For support of math functions
-use Digest::CRC qw( crc32 );	# Module for CRC32 calculation function
+use String::CRC32;				# Module for CRC32 calculation function
 use Term::ProgressBar;
+use Time::HiRes;
 
 $\ = "\n";			# Added as an invisible last element to the parameters passed to the print() function. *doc
 $| = 1;				# If nonzero, will flush the output buffer after every write() or print() function. Normally, it is set to 0. *doc

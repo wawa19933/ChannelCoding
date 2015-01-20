@@ -18,6 +18,7 @@ use IO::Poll qw( POLLIN ); 		# Module for ARQ realization: for data detection in
 use Fcntl qw( SEEK_SET );		# Declaration of SEEK_SET flag for file seeking
 use POSIX;						# For support of math functions
 use String::CRC32 qw( crc32 );
+use Time::HiRes;
 use v5.14;
 
 $\ = "\n";				# Added as an invisible last element to the parameters passed to the print() function. *doc
@@ -70,7 +71,9 @@ while ()
 		$serviceSocket->recv ( $buffer, 5000 );
 		@msg = split $delim, $buffer;
 		$cmd = shift @msg;
-		print "Counter for TCP: $cc <==> Command: $cmd";
+		if ($cmd) {
+			print "Counter for TCP: $cc <==> Command: $cmd";
+		}
 	}
 	
 	given ($cmd)
@@ -85,19 +88,16 @@ while ()
 				@window = sort @window;
 
 				my $dd = $windowsCount * $windowSize + 1;
-				#DEBUG
-				print "Window sorted: @window : $dd";
 
-				for (my $i = $windowsCount * $windowSize + 1; $i <= ($windowsCount + 1) * $windowSize; $i++)
-				{
-					my $curr = shift (@window);
-					if ($i ne $curr) {
-						push @arq, $i;
-						$i = $curr;
-						print "Append \@arq[$i] with $i";
-					}
-					print "Cycle: $i";
-				}
+				# for (my $i = $windowsCount * $windowSize + 1; $i <= ($windowsCount + 1) * $windowSize; $i++)
+				# {
+				# 	my $curr = shift (@window);
+				# 	if ($i ne $curr) {
+				# 		$i = $curr;
+				# 		push @arq, $i;
+				# 	}
+				# 	print "Cycle: $i";
+				# }
 				$serviceSocket->send ( join ($delim, ( 'ARQ', join (':', @arq) )) );
 			}
 			else {							# Window Success
