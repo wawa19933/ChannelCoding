@@ -84,27 +84,26 @@ while ()
 			print "$fileSize bytes of $fileName to be received...";
 		}
 		when ('CHECK') {
-			if ( scalar (@window) < $windowSize or scalar (@window) > 0 ) {
-				@window = sort @window;
-
-				# my $dd = $windowsCount * $windowSize + 1;
-
-				for (my $i = (($windowsCount * $windowSize) + 1); $i <= (($windowsCount + 1) * $windowSize); $i++)
-				{
-					my $curr = shift (@window);
-					if ($i ne $curr) {
-						$i = $curr;
-						push @arq, $i;
+			if (@window) {
+				if ( scalar (@window) < $windowSize or scalar (@window) > 0 ) {
+					@window = sort @window;
+					for (my $i = (($windowsCount * $windowSize) + 1); $i <= (($windowsCount + 1) * $windowSize); $i++)
+					{
+						my $curr = shift (@window);
+						if ($i ne $curr) {
+							$i = $curr;
+							push @arq, $i;
+						}
+						print "Cycle: $i";
 					}
-					print "Cycle: $i";
+					$serviceSocket->send ( join ($delim, ( 'ARQ', join (':', @arq) )) );
 				}
-				$serviceSocket->send ( join ($delim, ( 'ARQ', join (':', @arq) )) );
-			}
-			else {							# Window Success
-				serviceSocket->send ('OK');
-				$windowsCount++;
-				undef @arq;
-				undef @window;
+				else {							# Window Success
+					serviceSocket->send ('OK');
+					$windowsCount++;
+					undef @arq;
+					undef @window;
+				}
 			}
 		}
 
