@@ -92,7 +92,7 @@ while ( !eof(FILE) )
 	#	2.2) -- Checking and repeating
 	my $ack = 'KO';
 	my $c = 0;
-	while ( ( $ack ne 'OK' ) || ( $c < 5 ) ) 
+	while ( ( $ack ne 'OK' ) || ( $c < 2 ) ) 
 	{
 		$c++;
 		# DEBUG

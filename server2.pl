@@ -60,34 +60,18 @@ $windowsCount = 0;
 
 ##		Starting the receiving loop that is controlled by 	##
 ##		commands from the client via Switch-like statment	##
+my $cc = 0;
 while () 
 {
 	my $cmd;
 	my @msg;
-	if ( checkService() ) {
+	if ( checkService() > 0) {
+		$cc ++;
 		$serviceSocket->recv ( $buffer, 5000 );
 		@msg = split $delim, $buffer;
 		$cmd = shift @msg;
+		print "Counter for TCP: $cc <==> Command: $cmd";
 	}
-	# if ( checkData() ) {
-	# 			$dataSocket->recv ( $buffer, 9000 );
-				
-	# 			# my @msg = split $delim, $buffer;
-	# 			# my $num = shift @msg;
-	# 			# my $encoded = shift @msg;
-	# 			# my $cksum = shift @msg;
-	# 			# my $data = encode_base64 ( $encoded );
-
-	# 			# if ( $cksum eq crc32( $data ) ) {
-	# 			# 	push @window, $num;
-	# 			# 	$fileParts{ $num } = $data;	
-	# 			# }
-	# 			# else {
-	# 			# 	push @arq, $num;}
-
-	# 			# 	# 			print " UDP bytes of file received!";
-	# 		}
-	# print "\n\nCommand: $cmd \n";
 	
 	given ($cmd)
 	{
@@ -97,7 +81,7 @@ while ()
 			print "$fileSize bytes of $fileName to be received...";
 		}
 		when ('CHECK') {
-			if ( scalar (@window) < $windowSize ) {
+			if ( scalar (@window) < $windowSize or scalar (@window) > 0 ) {
 				@window = sort @window;
 
 				#DEBUG
