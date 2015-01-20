@@ -96,9 +96,6 @@ while ( !eof(FILE) )
 	while ( ( $ack ne 'OK' ) || ( $c < 2 ) ) 
 	{
 		$c++;
-		# DEBUG
-		print "Send CHECK <-----";
-		
 		$serviceSocket->send ('CHECK');
 		getARQ ($ack);
 		foreach my $n (@arq)
@@ -150,16 +147,18 @@ sub getARQ {
 	my $ack = shift;
 	my $bytes = $serviceSocket->recv ( $buffer, 9000 ) or 
 		die "Can not read the service TCP socket! : $!";
+	if ($buffer) {
+		print "ARQ comes: $buffer -- " . length( $buffer );
+		
+		my @msg = split $delim, $buffer;
+		$ack = shift @msg;
 
-	my @msg = split $delim, $buffer;
-	$ack = shift @msg;
-
-	if ($ack eq 'ARQ') {
-		@arq = split (':', shift ( @msg ));
+		if ($ack eq 'ARQ') {
+			@arq = split (':', shift ( @msg ));
+		}
 	}
-
 	# DEBUG
-	print "getARQ finish\nARQ list: @arq"; 
+	print "getARQ finish"; 
 }
 
 sub repeatPart {

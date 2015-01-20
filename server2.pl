@@ -87,17 +87,17 @@ while ()
 			if ( scalar (@window) < $windowSize or scalar (@window) > 0 ) {
 				@window = sort @window;
 
-				my $dd = $windowsCount * $windowSize + 1;
+				# my $dd = $windowsCount * $windowSize + 1;
 
-				# for (my $i = $windowsCount * $windowSize + 1; $i <= ($windowsCount + 1) * $windowSize; $i++)
-				# {
-				# 	my $curr = shift (@window);
-				# 	if ($i ne $curr) {
-				# 		$i = $curr;
-				# 		push @arq, $i;
-				# 	}
-				# 	print "Cycle: $i";
-				# }
+				for (my $i = (($windowsCount * $windowSize) + 1); $i <= (($windowsCount + 1) * $windowSize); $i++)
+				{
+					my $curr = shift (@window);
+					if ($i ne $curr) {
+						$i = $curr;
+						push @arq, $i;
+					}
+					print "Cycle: $i";
+				}
 				$serviceSocket->send ( join ($delim, ( 'ARQ', join (':', @arq) )) );
 			}
 			else {							# Window Success
