@@ -84,8 +84,9 @@ while ()
 			if ( scalar (@window) < $windowSize or scalar (@window) > 0 ) {
 				@window = sort @window;
 
+				my $dd = $windowsCount * $windowSize + 1;
 				#DEBUG
-				print "Window sorted: @window";
+				print "Window sorted: @window : $dd";
 
 				for (my $i = $windowsCount * $windowSize + 1; $i <= ($windowsCount + 1) * $windowSize; $i++)
 				{
