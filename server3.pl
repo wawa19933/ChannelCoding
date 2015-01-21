@@ -69,7 +69,7 @@ while () {
 			$dataSocket->recv ( $buffer, 9000 );
 			my @msg = split $delim, $buffer;
 			my $num = shift @msg;
-			my $data = base64_decode ( shift (@msg) );
+			my $data = decode_base64 ( shift (@msg) );
 			my $cksum = shift @msg;
 
 			if ( crc32 ($data) eq $cksum ) {
