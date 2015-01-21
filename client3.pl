@@ -98,3 +98,24 @@ while ( ( $ack ne 'OK' ) || ( $c < 2 ) )
 		}
 	}
 }
+
+sub repeatPart {
+	my $num = shift;
+
+	# DEBUG
+	print "\t- $num Repeat is started...";
+
+	open FH, '<', $filePath or 
+		die "Open file for repeat the part error : $!";
+	seek ( FH, $num * $blockSize, 0 );
+	read ( FH, $buffer, $blockSize ) or
+		die "Read the part for repeat error : $!";
+
+	my $res = $dataSocket->send ( ('DATA', $num, encode_base64($buffer)) ) or
+		die "Send the repeat part error : $!";
+	
+	# DEBUG
+	print "\t- $num Repeat is finished! $res bytes";
+
+	return $res;
+}

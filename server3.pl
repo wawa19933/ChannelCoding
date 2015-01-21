@@ -80,10 +80,10 @@ while () {
 			}
 		alarm 0;
 	}
-	my $i = 0;
+	my $ii = 0;
 	my @rcv = sort ( keys (%fileParts) );
 	
-	if ( defined @arq ) {
+	if ( @arq ) {
 		foreach my $n (@arq) {
 			if(!scalar(grep { $_ eq $n } @rcv)) {
 				push @arq, $n;	
@@ -92,11 +92,11 @@ while () {
 	} 
 	else {
 		foreach my $n ( @rcv ) {
-			$i++;
-			if ( $i ne $n ) {
-				push @arq, $i;
-				print "Append arq with: $i ne $n";
-				$i = $n;
+			$ii++;
+			if ( $ii ne $n ) {
+				push @arq, $ii;
+				print "Append arq with: $ii ne $n";
+				$ii = $n;
 			}
 		}
 	}
