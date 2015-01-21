@@ -59,10 +59,11 @@ if ( $serviceSocket ) {
 	print "Client $peerName ($peerAddress) is connected!\n";
 }
 $windowsCount = 0;
-
+my $stop = '0';
 ##		Starting the receiving loop that is controlled by 	##
 ##		commands from the client via Switch-like statment	##
 while () {
+	while ( $stop eq '0' ) {
 	eval {
 		local $SIG{ALRM} = sub { die "Alarm!!"; };
 		alarm 3;
@@ -78,15 +79,18 @@ while () {
 			else {
 				push @arq, $num;
 			}
+			print "Packet : $num";
 		alarm 0;
 	};
-	if ($@) {
-		die unless $@ eq "Timeout for socket receive"; # propagate unexpected errors
-		# timed out
-	}
-	else {
-		print "No Timeout of reception";
-		# didn't
+		if ( $@ ) {
+			die unless $@ eq "Timeout for socket receive"; # propagate unexpected errors
+			# timed out
+			$stop = '1';
+		}
+		else {
+			print "No Timeout of reception";
+			# didn't
+		}
 	}
 	my $ii = 0;
 	my @rcv = sort ( keys (%fileParts) );
