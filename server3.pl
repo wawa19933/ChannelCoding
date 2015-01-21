@@ -79,6 +79,14 @@ while () {
 				push @arq, $num;
 			}
 		alarm 0;
+	};
+	if ($@) {
+		die unless $@ eq "Timeout for socket receive"; # propagate unexpected errors
+		# timed out
+	}
+	else {
+		print "No Timeout of reception";
+		# didn't
 	}
 	my $ii = 0;
 	my @rcv = sort ( keys (%fileParts) );
