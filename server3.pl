@@ -9,7 +9,8 @@
 #						    ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾	#
 #################################################################
 # use strict;
-use warnings;
+# use warnings;
+no warnings 'uninitialized';
 
 use IO::Socket::INET;         	# Module that adds the socket support
 use File::Basename;				# Module for extracting file name from the path
@@ -28,7 +29,7 @@ my $udpPort = '8849';							# Variable for port number defenition
 my $tcpPort = '8850';
 my ( $fileName, $fileSize, $windowsCount, %fileParts ); # Some global variables
 my ( $dataSocket, $serviceSocket );
-my ( $buffer, @window, @arq );
+my ( $buffer, @check, @arq );
 my $blockSize = 4096;						# Definding of packet portion for transmittion
 my $windowSize = 80;						# ARQ Window size 
 my $timeout = 0.7;
@@ -79,4 +80,28 @@ while () {
 			}
 		alarm 0;
 	}
+	my $i = 0;
+	my @rcv = sort ( keys (%fileParts) );
+	
+	if ( defined @arq ) {
+		foreach my $n (@arq) {
+			if(!scalar(grep { $_ eq $n } @rcv)) {
+				push @arq, $n;	
+			}
+		}
+	} 
+	else {
+		foreach my $n ( @rcv ) {
+			$i++;
+			if ( $i ne $n ) {
+				push @arq, $i;
+				print "Append arq with: $i ne $n";
+				$i = $n;
+			}
+		}
+	}
+	if ( !@arq ) {
+
+	}
+	$serviceSocket->send ( join ( ';', ('ARQ', join(':', @arq)) ) );
 }
