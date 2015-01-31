@@ -22,15 +22,14 @@ use Term::ProgressBar;			# Console progressbar
 use IO::Poll qw( POLLIN ); 		# Module for ARQ realization: for data detection in a receiving buffer
 use Fcntl qw( SEEK_SET );		# Declaration of SEEK_SET flag for file seeking
 use Digest::MD5 qw( md5_hex md5_base64 );
-use Time::HiRes qw( gettimeofday tv_interval );
+use Time::HiRes qw( gettimeofday tv_interval usleep );
 
 $\ = "\n";			# Added as an invisible last element to the parameters passed to the print() function. *doc
 $| = 1;				# If nonzero, will flush the output buffer after every write() or print() function. Normally, it is set to 0. *doc
 				
 my $filePath = shift; 	     					# Taking the file's path from the FIRST argument
-my $hostAddr = shift || 'localhost';			# Taking the server's address from the SECOND argument
+my $hostAddr = shift or 'localhost';			# Taking the server's address from the SECOND argument
 my $udpPort = '8849';							# Variable for port number of the UDP socket for data transmission
-# my $tcpPort = '8850';							# Port for TCP connection for service info exchange
 my $fileName = fileparse ( $filePath );			# Extracting the name of the file
 my $fileSize = -s $filePath;					# Taking the size of the local file (-s is a size operator)
 my $blockSize = 1024;							# Definding of packet portion for transmittion
@@ -38,13 +37,11 @@ my $delim = ';';								# Global delimiter for packets' fields
 my ( $buffer, $number, $partsCount); 			# Some global variables
 my ( $udpSocket, $tcpSocket );					# Global
 my ( $totalBytes, $totalPackets, $totalTime, $lossCount ); # Global
+my $maxBuffer = 16000;
 ###	END of declarations
 #------------------------------------------------------------------------------------------------------------------------------------
 print "\n--> Going to send $fileName ($fileSize bytes) to $hostAddr...\n";	
 #------------------------------------------------------------------------------------------------------------------------------------
-#	Opening the specified file in BINARY form for reading only
-# open FILE, '<', $filePath or die "Can not open the file!!! $filePath: $!";
-# binmode FILE;
 #------------------------------------------------------------------------------------------------------------------------------------
 #	Creating a UDP socket for file parts transmission to the specified host
 $udpSocket = IO::Socket::INET->new (
@@ -53,129 +50,116 @@ $udpSocket = IO::Socket::INET->new (
 		Proto 		=> 'udp',
 		Type		=> SOCK_DGRAM
 	) or die "Couldn't create UDP socket!!!: $!";
-
-# #	Creating a TCP socket for service info transmission
-# $tcpSocket = IO::Socket::INET->new (
-# 		PeerAddr	=> $hostAddr,
-# 		PeerPort	=> $tcpPort,
-# 		Proto 		=> 'tcp',
-# 		Reuse 		=> 1,
-# 		Type		=> SOCK_STREAM
-# 	) or die "Couldn't create TCP socket! : $!";
-readFile ();
-$partsCount = ceil ( $fileSize / $blockSize );
+#------------------------------------------------------------------------------------------------------------------------------------
 $number = 0;											# Initialization of the counter for transmitions' number
 $totalTime = 0;
 $totalPackets = 0;
 $totalBytes = 0;
-# my $progressBar = Term::ProgressBar->new ( $fileSize ); # Initialization of a progress bar with the size of the file
+$lossCount = 0;
+my @file = readFile ( $filePath );
+my $startTime = [gettimeofday];
 #------------------------------------------------------------------------------------------------------------------------------------
 #	1)	---	Sending a file info 
-# my $ck = Digest::MD5->new ();
-# $ck->addfile ( FILE );
-sendWithACK ( join ($delim, ( 'INFO', $fileName, $fileSize, $blockSize, md5_hex( join ('', @file) ) )), 2 );
-# seek FILE, 0, 0;
+my $message = join ($delim, ( 'INFO', $fileName, $fileSize, $blockSize, $partsCount ));
+sendWithACK ( $message, 2 );
 #------------------------------------------------------------------------------------------------------------------------------------
-my $t0 = [gettimeofday];
+my $timeInfo = tv_interval ( $startTime );
 #------------------------------------------------------------------------------------------------------------------------------------
-# while ( !eof ( FILE ) ) 
-# {
-# 	my $bytes = read ( FILE, $buffer, $blockSize ) or 		# Reading the $blockSize bytes from the file
-# 				die "Error during file reading : $!";
-
-# 	if ( $bytes lt $blockSize ) {
-# 		print "Read from file: $bytes / $blockSize bytes";
-# 	}
-# 	push @file, $buffer;
-	
-# 	$number ++;
-# 	$bytes = $udpSocket->send ( join ( $delim, ('DATA', $number, encode_base64 ( $buffer ), md5_hex ( $buffer )) ) ) or 
-# 				die "Error during sending : $!"; 	# Sending the Base64 encoded part of the file and checksum for this part
-
-# 	$progressBar->update ( tell FILE );
-# 	$totalBytes += $bytes;
-# 	$totalPackets ++;
-# }
-my $progressBar = Term::ProgressBar->new ( $partsCount+1 ); # Initialization of a progress bar with the size of the file
-
-for ( my $c = 0; $c < $partsCount; $c++ ) {
-	my $bytes = $udpSocket->send (join ( $delim, ('DATA', $c+1, encode_base64 ( $file[ $c ] ), md5_hex ( $file[ $c ] )) ) ) or
+my $progressBar = Term::ProgressBar->new ( $partsCount ); 	# Initialization of a progress bar with the size of the file
+for ( my $c = 0; $c < $partsCount; $c++ ) 
+{
+	my $data = $file[ $c ];
+	my $bytes = $udpSocket->send (join ( $delim, ('DATA', ($c + 1), encode_base64 ( $data ), md5_hex ( $data ), scalar (@file)) ) ) or
 				die "Error while send : $!";
-	$progressBar->update ( $c );
+
+	$progressBar->update ( $c + 1 );
 	$totalBytes += $bytes;
 	$totalPackets ++;
 }
+#------------------------------------------------------------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------------------------------------------------------------
-# sendWithACK ( 'END' );
-#------------------------------------------------------------------------------------------------------------------------------------
-#	2.2) -- Checking and repeating
-my $ack = 'KO';
-while ( $ack ne 'OK' )
-{
-	$udpSocket->send ('CHECK');
-	if ( checkIncomingUDP ( 2 ) > 0 ) {
-		print "CheckIncomingUDP()";
-	 	$udpSocket->recv ( $buffer, 5000 );
-
-		my @msg = split $delim, $buffer;
+#	2.2) -- Checking and repeating							#	
+my $ack = 'KO';												#
+my $startChecking = [gettimeofday];										#
+															#
+while ( $ack ne 'OK' )										#
+{															#
+	my $arqTime = [ gettimeofday ];								#						#
+	$udpSocket->send ('CHECK');								#
+															# Sending 'CHECK' command untill all pieces of file will be received by server
+															#
+	if ( checkIncomingUDP ( 0.2 ) > 0 ) {					#
+	 	$udpSocket->recv ( $buffer, 16000 );				#
+	 														#
+		my @msg = split $delim, $buffer;					#
 		$ack = shift @msg;
-		my @arq = split (':', shift ( @msg ));
-		
-		if ( @arq ) {
-			print "ACK: $ack ";
-			foreach my $n ( @arq ) {
-				repeatPart ( $n );
-			}
-		}
-	 }
-}
+		# my $num = shift @msg;									#
+	 														#
+	 	if ( $ack eq 'ARQ' ) {								#
+	 		print "$ack received";							#
+			@arq = split (':', shift ( @msg ));				#
+			
+			if ( @arq ) {										#
+				print "ARQ count: ". scalar @arq;				#
+				foreach my $n ( @arq ) {						#
+					repeatPart ( $n );							#
+					$lossCount ++;								#
+				}												#
+			}													#
+		}													#
+	}	
+	else {
+		print "Timeout: ". tv_interval($startChecking);
+	}													#													#
+	sleep ( 0.05 );										#
+	undef @arq;												#
+}															#
 #------------------------------------------------------------------------------------------------------------------------------------
 # FINISHING
 #------------------------------------------------------------------------------------------------------------------------------------
-$totalTime = tv_interval ( $t0 );
-$udpSocket->send ( join $delim, ('FINISH', $totalTime, md5_hex( join ( '', @file )), $totalBytes, $totalPackets) );
+$totalTime = tv_interval ( $startTime );
+sendWithACK ( join $delim, ('FINISH', $totalTime, md5_hex( join ( '', @file )), $totalBytes, $totalPackets) );
 
-print "\n--> File is transfered!";
-my $sss = $totalBytes - $fileSize;
-print "Total: $totalBytes ($sss) bytes in $totalPackets packets. During $totalTime seconds\n";
+print "\n--> $fileSize bytes of file are transfered!";
+print "Total: $totalBytes bytes in $totalPackets packets. During ". tv_interval ( $startTime ). " seconds";
+print "ARQ count: $lossCount, losses - ". ($lossCount/$totalPackets*100). "%"; 
+print "MD5 (original): ". md5_hex ( join ( '', @file ) );
 
-print "MD5(array): ". md5_hex ( join ( '', @file ) );
-# print "MD5(file) : ". Digest::MD5->new()->addfile ( FILE )->hexdigest;
+$udpSocket->recv ( $buffer, $maxBuffer );
+my ( $serverHash, $serverDrops, $serverTime ) = split $delim, $buffer;
+print "MD5 (sended)  : $serverHash";
+print "Time: $totalTime seconds / $serverTime seconds (server time)";
 
+#------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------
 sub sendWithACK {
 	my $data = shift;
-	my $timeout = shift or 1.1;
+	my $timeout = shift or 1.5;
 	my $ack = 'KO';
-	my $poll = IO::Poll->new ();
-	$poll->mask ( $udpSocket => POLLIN );
+	
 	while ( $ack ne 'OK' ) {
 		$udpSocket->send ( $data );
-		if ( $poll->poll ( $timeout ) > 0 ) {
-			$udpSocket->recv ( $ack, 5 );
+		if ( checkIncomingUDP ($timeout) > 0 ) {
+			$udpSocket->recv ( $ack, 5000 );
 		}
 	}
+
+	return $ack;
 }
 
 sub repeatPart {
 	my $num = shift;
+	$lossCount ++;
 
-	open FH, '<', $filePath or 
-				die "Open file for repeat the part error : $!";
-	seek ( FH, $num * $blockSize, 0 );
-	read ( FH, $buffer, $blockSize ) or
-				die "Read the part for repeat error : $!";
-
-	# my $res = $udpSocket->send ( join ( $delim, ('REPEAT', $num, encode_base64($buffer), md5_hex ($buffer)) ) ) or
-	# 			die "Send the repeat part error : $!";
-	$udpSocket->send (join ( $delim, ('DATA', $num, encode_base64 ( $file[ $num-1 ] ), md5_hex ( $file[ $num-1 ] )) ) ) or
+	$udpSocket->send (join ( $delim, ('REPEAT', $num, encode_base64 ( $file[ $num-1 ] ), md5_hex ( $file[ $num-1 ] )) ) ) or
 				die "Error while send : $!";
 
 	return $res;
 }
 
 sub checkIncomingUDP {
-	my $timeout = shift or 1.1;
+	my $timeout = shift or 1.8;
 	my $poll = IO::Poll->new ();
 	$poll->mask ( $udpSocket => POLLIN );
 
@@ -183,18 +167,24 @@ sub checkIncomingUDP {
 }
 
 sub readFile {
+	my $fname = shift or $filePath;
+	my $readSize = 0;
+	my $counter = 0;
 	open $fh, "<", $filePath;
 
 	while ( not eof ($fh) ) {
 		my $bytes = read ( $fh, $buffer, $blockSize ) or 		# Reading the $blockSize bytes from the file
 				die "Error during file reading : $!";
-
+		$readSize += $bytes;
 		if ( $bytes lt $blockSize ) {
-			print "Read from file: $bytes / $blockSize bytes";
+			print "Read from file: $bytes / $blockSize bytes";g
 		}
-
-		push @file, $buffer;
+		$file[ $counter ] = $buffer;
+		$counter ++;
 	}
+	$partsCount = scalar @file;
+	print "File '$fileName' is in memory - $readSize bytes - $partsCount pieces";
+	print "Counter: $counter";
 
 	return @file;
 }
