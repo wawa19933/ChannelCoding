@@ -11,37 +11,28 @@
 # use strict;
 # use warnings;
 no warnings 'uninitialized';
-use IO::Socket::INET;         				# Module that adds the socket support
-use MIME::Base64;							# Module for encoding binary data
-use POSIX;									# For support of math functions
-use IO::Poll qw( POLLIN ); 					# Module for ARQ realization: for data detection in a receiving buffer
-use Fcntl qw( SEEK_SET );					# Declaration of SEEK_SET flag for file seeking
-use Digest::MD5 qw( md5_hex md5_base64 );	# For MD5 hash sum
-use Time::HiRes qw( gettimeofday tv_interval ); # For time measurement
-use v5.12;									# For given()/when() statements support
+
+use IO::Socket::INET;         	# Module that adds the socket support
+use File::Basename;				# Module for extracting file name from the path
+use MIME::Base64;				# Module for encoding binary data
+use IO::Poll qw( POLLIN ); 		# Module for ARQ realization: for data detection in a receiving buffer
+use Fcntl qw( SEEK_SET );		# Declaration of SEEK_SET flag for file seeking
+use POSIX;						# For support of math functions
+use Digest::MD5 qw( md5_hex md5_base64 );
+use String::CRC32 qw( crc32 );
+use Time::HiRes qw( gettimeofday tv_interval );
+use v5.12;
 
 $\ = "\n";				# Added as an invisible last element to the parameters passed to the print() function. *doc
 $| = 1;					# If nonzero, will flush the output buffer after every write() or print() function. Normally, it is set to 0. *doc
 				
-my $udpPort = '8849';									# Variable for port number defenition
-my ( $fileName, $fileSize, $fileHash, $piecesCount, ); 	# Some global variables for file Info
-my ( $buffer, @arq, @prevArq, @lastReceived, %file, @fileArray, @repeated );	# Global temporary variables
-my $blockSize = 1300;									# Definding of packet portion for transmittion
-my $maxBuffer = 16000;									# Max size of receiving buffer
-my $delim = ';';											# For global message delimiter
+my $udpPort = '8849';							# Variable for port number defenition
+my ( $fileName, $fileSize, $fileHash, $packetsCount, @fileArray, @rcvNumbers, @repeated ); # Some global variables
+my ( $buffer, @arq, @prevArq, %parts );
+my ( $totalBytes, $totalReceived, $totalPackets, $totalTime ); #
+my $blockSize = 1300;						# Definding of packet portion for transmittion
+my $delim = ';';
 
-my $totalPackets = 0;
-my $totalTime = 0;
-my $totalBytes = 0;
-my $totalReceived = 0;
-my $progStart = [ gettimeofday ];
-my $checkFlag = '0';
-my $checkTimeout = 0;
-my $arqNumber = 0;
-my $startTime = 0;
-#------------------------------------------------------------------------------------------------------------------------------------
-# Start
-#------------------------------------------------------------------------------------------------------------------------------------
 print "======= File transfer on Perl ========";
 my $udpSocket = IO::Socket::INET->new (
 		LocalPort 	=> $udpPort,
@@ -49,32 +40,48 @@ my $udpSocket = IO::Socket::INET->new (
 		Type		=> SOCK_DGRAM,
 		Reuse 		=> 1
 	) or die "Could not start the server on port $udpPort : $!";
+
+$totalPackets = 0;
+$totalTime = 0;
+$totalBytes = 0;
+$totalReceived = 0;
+			
 #------------------------------------------------------------------------------------------------------------------------------------
+##		commands from the client via Switch-like statment	##
+##		Starting the receiving loop that is controlled by 	##
 #------------------------------------------------------------------------------------------------------------------------------------
-#		commands from the client via Switch-like statment	#
-#		Starting the receiving loop that is controlled by 	#
+my $progStart = [ gettimeofday ];
+my $startTime;
 #------------------------------------------------------------------------------------------------------------------------------------
+my $checkFlag = '0';
 while () {
 	my $receptionTime = [ gettimeofday ];
-	my $rcv = $udpSocket->recv ( $buffer, $maxBuffer );
+	my $rcv = $udpSocket->recv ( $buffer, 7777 );
 	my @msg = split $delim, $buffer;
 	my $cmd = shift @msg;
-	print "CMD: $cmd";
+
+	# my $last;
+	# if ( ($cmd eq 'REPEAT') and ($last ne 'REPEAT') ) {
+	# 	print "REPEAT now";
+	# }
+	# $last = $cmd;	
+
 	given ( $cmd )
 	{
 		when ('INFO') {
-			sendACK ();
 			my ( $port, $addr ) = sockaddr_in ( $rcv );
 			my $peerAddress = inet_ntoa ( $addr );
+			sendACK ();
 
 			$fileName  =  shift @msg;
 			$fileSize  =  shift @msg;
 			$blockSize =  shift @msg;
-			$piecesCount = shift @msg or ceil ( $fileSize / $blockSize );
+			$fileHash  =  shift @msg;
+			$packetsCount = shift @msg or ceil ( $fileSize / $blockSize );
 			
-			$startTime = [gettimeofday];
+			$startTime = [ gettimeofday ];
 
-			print "Receiving '$fileName'\t$fileSize bytes in $piecesCount parts from $peerAddress ...";
+			print "Receiving \'$fileName\'\t$fileSize bytes in $packetsCount parts from $peerAddress ...";
 		}
 		when ('DATA') { 
 			$checkFlag = '0';
@@ -87,9 +94,12 @@ while () {
 				push @arq, $num;
 			} 
 			else {
-				# $file{ $num } = $data;
-				$fileArray[ $num - 1 ] = $data;
-				push @lastReceived, $num;
+				# if ( length ($data) != $blockSize ) {
+				# 	print "Data piece is too small ". length($data). "/$blockSize bytes";
+				# }
+				$parts{ $num } = $data;
+				# $file[ $num - 1 ] = $data;
+				# push @rcvNumbers, $num;
 			}
 
 			$totalBytes += length $data;
@@ -97,62 +107,54 @@ while () {
 			$totalPackets ++;
 			
 			my $rcvTime = tv_interval ($receptionTime);
-			if ( $rcvTime > 1.1 ) {
+			if ( $rcvTime > 1 ) {
 				print "$num --> $rcvTime seconds!";
 			}
 		}
 		when ('CHECK') {
-			if ( scalar (@fileArray) eq $piecesCount ) {
-				print "All pieces are received!";
-				sendACK ();
-				break;
-			}
 			if ( $checkFlag eq '0' ) {
 				$checkFlag = '1';
-				$checkTimeout = [ gettimeofday ];
+				my @nums = keys %parts;
+				my $receivedPieces = scalar @nums;
 				
-				my $receivedPieces = scalar @fileArray;
-				if ( $receivedPieces eq $piecesCount ) {
-					break;
-				}
 				my $ts1 = tv_interval ( $startTime );
-				print "$receivedPieces \/ $piecesCount packets are received in $ts1 seconds";
-
+				print "$receivedPieces \/ $packetsCount packets are received in $ts1 seconds";
 				$ts1 = [ gettimeofday ];
 
 				if ( @prevArq ) {
 					foreach my $n ( @prevArq ) {
-						my @gr = grep { $n eq $_ } @lastReceived;
+						my @gr = grep { $n eq $_ } @repeated;
 						if ( !scalar ( @gr ) ) {
 							push @arq, $n;
 						}
 					}
 				}
 				else {
-					foreach my $n ( 1 .. $piecesCount ) {
-						my @gr = grep { $n eq $_ } @lastReceived;
+					foreach my $n ( 1 .. $packetsCount ) {
+						my @gr = grep { $n eq $_ } @nums;
 						if ( !scalar ( @gr ) ) {
 							push @arq, $n;
 						}
 					}
 				}
 				if ( @arq ) {
-					@prevArq = @arq;
+					if ( $#prevArq ne $#arq ) {
+						@prevArq = @arq;
+					}
+
 					$udpSocket->send ( join $delim, ('ARQ', join( ':', @arq )) );
+
+					# print "Received: ". join (',', checkOrder ( @nums ));
 					print "Size of ARQ: ". scalar @arq;
 				} 
 				else {
 					sendACK ();
 				}
 
-				# print "CHECK -->". tv_interval($ts1)." seconds!";
+				print "CHECK -->". tv_interval($ts1)." seconds!";
+
+				undef @arq;
 			}
-			else {
-				if ( tv_interval ($checkTimeout) > 0.1 ) {
-					$checkFlag = '0';
-				}
-			}
-			undef @arq;
 		}
 		when ('REPEAT') {
 			$checkFlag = '0';
@@ -167,47 +169,41 @@ while () {
 				if ( $blockSize lt length ($data) ) {
 					print "Data length: ". length $data;
 				}
-				# $file{ $num } = $data;
-				$fileArray[ $num - 1 ] = $data;
-				push @lastReceived, $num;
+				# $file[ $num - 1 ] = $data;
+				$parts{ $num } = $data;
+				# print "Repeated: $num";
 				push @repeated, $num;
 
 				$totalBytes += length $data;
 				$totalReceived += length $buffer;
 				$totalPackets ++;
 			}
-			
-			my $rcvTime = tv_interval ( $receptionTime );
+			my $rcvTime = tv_interval ($receptionTime);
+			# print "REPEAT: receiving time $rcvTime, work time: ". tv_interval($tt);
 			if ( $rcvTime > 1 ){
-				print "$num --> $rcvTime seconds!";
 			}
 		}
 		when ('FINISH') {
 			my $md5 = saveFile ();
-			$totalTime = tv_interval ($startTime);
 			my ( $clientTime, $cksum, $clientBytes, $clientPackets ) = @msg;
-			$fileHash = $cksum;
 			sendACK ();
-			sendSummary( ($md5, scalar(@repeated), $totalTime) );
+			findDuplicates (keys %parts);
 
 			print "\n----------";
 			print "File '$fileName' is written - ". (-s $fileName). " bytes";
-			print "Parts total: ". scalar (@fileArray);
+			print "Parts total: ". scalar (keys %parts);
 			print "Repeated count: ". scalar ( @repeated );
 			print "";
 			print "MD5 (written) : $md5";
 			print "MD5 (original): $fileHash";
-			print "Time: $totalTime seconds / $clientTime seconds (client time)";
+			print "Time: ". tv_interval ($startTime). " seconds";
 
 			resetVars ();
 		}
 	}
-
-	undef @arq;
-	undef @lastReceived;
 }
 
-print "\nTotal packets: $totalPackets, size of array: ". scalar (@fileArray);
+print "\nTotal packets: $totalPackets, size of array: ". scalar (keys %parts);
 print "Total received $totalReceived bytes and $totalBytes bytes of file";
 print "Finish " . tv_interval ( $startTime ) . " seconds";
 
@@ -249,21 +245,30 @@ sub findDuplicates {
 }
 
 sub saveFile {
-	# foreach my $n ( 1 .. $piecesCount ) {
-	# 	$fromHash .= $parts{ $n };
-	# 	$values[ $n - 1 ] = $parts{ $n };
-	# }
-	my $data = join '', @fileArray;
+	# my ( @data ) = @_;
+	# my $dt = join('', @data);
+	my $fromHash;
+	my @values;
+	foreach my $n ( 1 .. $packetsCount ) {
+		$fromHash .= $parts{ $n };
+		$values[ $n - 1 ] = $parts{ $n };
+	}
+	print "\n Hash: ". scalar(keys %parts). " elements, ". length($fromHash). " bytes";
+
 	open my $fh, "+>", $fileName or die "Error with opening : $!";
 	binmode $fh;
 
 	$\ = "";
-	print $fh "$data";
+	print $fh "$fromHash";
 	
 	seek $fh, 0, 0;
 	my $sum = Digest::MD5->new()->addfile($fh);
 	
 	$\ = "\n";
+	# print "MD5 (hash): ". md5_hex ($fromHash). "  ". length $fromHash;
+	# print "MD5 (hash1): ". md5_hex (join('', @values)). "  ". scalar @values;
+	# print "MD5 (array): ". md5_hex ($fromHash). "  ". length $fromHash;
+	
 	close $fh;
 	return $sum->hexdigest;
 }
@@ -282,30 +287,20 @@ sub checkUdp {
 	return $res;
 }
 
-sub sendSummary {
-	for ( 1 .. 3 ) {
-		$udpSocket->send ( join $delim, shift ( @_ ) );
-	}
-}
-
 sub resetVars {
 	undef @arq;
 	undef @prevArq;
-	undef @fileArray;
-	undef @lastReceived;
-	undef @repeated;
+	# undef @file;
 	undef $fileName;
 	undef $fileSize;
 	undef $fileHash;
-	undef $piecesCount;
+	undef $packetsCount;
+	undef @rcvNumbers;
+	undef @repeated;
 	undef $buffer;
-	undef %file;
-
-	$totalPackets = 0;
-	$totalTime = 0;
-	$totalBytes = 0;
-	$totalReceived = 0;
-	$progStart = [ gettimeofday ];
-	$checkFlag = '0';
-	$checkTimeout = 0;
+	undef %parts;
+	undef $totalBytes;
+	undef $totalPackets;
+	undef $totalReceived;
+	undef $totalTime;
 }
