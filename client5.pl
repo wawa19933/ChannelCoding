@@ -108,12 +108,13 @@ while ( $ack ne 'OK' )										#
 	$udpSocket->send ('CHECK');	
 															# Sending 'CHECK' command untill all pieces of file will be received by server
 															#
-	if ( checkIncomingUDP ( 0.1 ) > 0 ) {						#
+	if ( checkIncomingUDP ( 0.2 ) > 0 ) {						#
 	 	$udpSocket->recv ( $buffer, 16000 );					#
 	 														#
-		print "$ss> CheckIncomingUDP started";	#	
 		my @msg = split $delim, $buffer;					#
-		$ack = shift @msg;									#
+		$ack = shift @msg;
+		print "$ack> CheckIncomingUDP started - ". 
+						length ($buffer)." bytes";	#	
 	 														#
 	 	if ( $ack eq 'ARQ' ) {	
 	 		print "$ack received";							#

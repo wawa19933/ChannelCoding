@@ -54,6 +54,7 @@ my $progStart = [ gettimeofday ];
 my $startTime;
 #------------------------------------------------------------------------------------------------------------------------------------
 my $checkFlag = '0';
+my $checkTimeout = 0;
 while () {
 	my $receptionTime = [ gettimeofday ];
 	my $rcv = $udpSocket->recv ( $buffer, 7777 );
@@ -114,6 +115,7 @@ while () {
 		when ('CHECK') {
 			if ( $checkFlag eq '0' ) {
 				$checkFlag = '1';
+				$checkTimeout = [ gettimeofday ];
 				my @nums = keys %parts;
 				my $receivedPieces = scalar @nums;
 				
@@ -152,9 +154,13 @@ while () {
 				}
 
 				print "CHECK -->". tv_interval($ts1)." seconds!";
-
-				undef @arq;
+				$checkTimeout = 0;
 			}
+			elsif ( $checkTimeout > 5 ) {
+				$checkFlag = '0';
+			}
+			undef @arq;
+			$checkTimeout ++;
 		}
 		when ('REPEAT') {
 			$checkFlag = '0';
